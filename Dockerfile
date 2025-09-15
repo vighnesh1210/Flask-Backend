@@ -9,13 +9,13 @@ ENV PYTHONPATH=/app
 RUN apt-get update && apt-get install -y \
     tesseract-ocr \
     tesseract-ocr-eng \
-    libgl1-mesa-glx \
     libglib2.0-0 \
     libsm6 \
     libxext6 \
     libxrender-dev \
     libgomp1 \
-    libglib2.0-0 \
+    libgthread-2.0-0 \
+    python3-opencv \
     && rm -rf /var/lib/apt/lists/*
 
 # Create working directory

@@ -1,0 +1,30 @@
+# Virtual Environment
+venv/
+env/
+ENV/
+
+# Python cache files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Package files
+*.egg-info/
+build/
+dist/
+*.whl
+WHEEL
+METADATA
+RECORD
+INSTALLER
+
+# IDE files
+.vscode/
+
+# Environment variables
+.env
+
+# OS files
+.DS_Store
+Thumbs.db

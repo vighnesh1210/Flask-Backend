@@ -7,26 +7,18 @@ from datetime import datetime
 import uuid
 from PIL import Image
 
-
-
 # Import utility modules
 from utils.image_utils import ImageProcessor
 from utils.model_predictor import ModelPredictor
 from utils.ocr_validator import OCRValidator
 from utils.gradcam import generate_ocr_focused_gradcam, generate_gradcam, generate_error_focused_gradcam
 
-
-
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-
-
 app = Flask(__name__)
 CORS(app)
-
-
 
 # Configuration
 UPLOAD_FOLDER = 'uploads'
@@ -35,28 +27,20 @@ MODEL_FOLDER = 'models'
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'bmp', 'tiff'}
 MAX_FILE_SIZE = 16 * 1024 * 1024  # 16MB
 
-
-
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['RESULTS_FOLDER'] = RESULTS_FOLDER
 app.config['MODEL_FOLDER'] = MODEL_FOLDER
 app.config['MAX_CONTENT_LENGTH'] = MAX_FILE_SIZE
-
-
 
 # Create directories if they don't exist
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(RESULTS_FOLDER, exist_ok=True)
 os.makedirs(MODEL_FOLDER, exist_ok=True)
 
-
-
 # Initialize components
 image_processor = ImageProcessor()
 model_predictor = ModelPredictor(model_path=os.path.join(MODEL_FOLDER, 'fake_note_detector_final.h5'))
 ocr_validator = OCRValidator()
-
-
 
 # Add model summary and debugging info
 if model_predictor.is_model_loaded():
@@ -75,12 +59,8 @@ if model_predictor.is_model_loaded():
 else:
     print("Model failed to load - cannot show summary")
 
-
-
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
-
-
 
 @app.route('/health', methods=['GET'])
 def health_check():
@@ -95,8 +75,6 @@ def health_check():
             'gradcam_available': True
         }
     })
-
-
 
 @app.route('/authenticate', methods=['POST'])
 def authenticate_banknote():
@@ -261,8 +239,6 @@ def authenticate_banknote():
         traceback.print_exc()
         return jsonify({'error': f'Processing failed: {str(e)}'}), 500
 
-
-
 @app.route('/gradcam/<filename>', methods=['GET'])
 def get_gradcam_image(filename):
     """Serve GradCAM visualization images"""
@@ -275,8 +251,6 @@ def get_gradcam_image(filename):
     except Exception as e:
         logger.error(f"Error serving GradCAM image: {e}")
         return jsonify({'error': 'Failed to serve image'}), 500
-
-
 
 @app.route('/model/info', methods=['GET'])
 def get_model_info():
@@ -294,8 +268,6 @@ def get_model_info():
             }
         }
     })
-
-
 
 @app.route('/validate/ocr', methods=['POST'])
 def validate_ocr_only():
@@ -340,8 +312,6 @@ def validate_ocr_only():
     except Exception as e:
         logger.error(f"Error in OCR validation: {e}")
         return jsonify({'error': f'OCR processing failed: {str(e)}'}), 500
-
-
 
 @app.route('/test/gradcam', methods=['POST'])
 def test_gradcam():
@@ -397,25 +367,17 @@ def test_gradcam():
         traceback.print_exc()
         return jsonify({'error': f'Test failed: {str(e)}'}), 500
 
-
-
 @app.errorhandler(413)
 def too_large(e):
     return jsonify({'error': 'File too large. Maximum size is 16MB'}), 413
-
-
 
 @app.errorhandler(404)
 def not_found(e):
     return jsonify({'error': 'Endpoint not found'}), 404
 
-
-
 @app.errorhandler(500)
 def internal_server_error(e):
     return jsonify({'error': 'Internal server error'}), 500
-
-
 
 if __name__ == '__main__':
     print("Starting ScanSure Banknote Authentication API...")
@@ -434,7 +396,12 @@ if __name__ == '__main__':
     print("  GET  /gradcam/<filename> - Get GradCAM visualization")
     print("  GET  /health - Health check")
     print("  GET  /model/info - System information")
-    print(f"\nServer running on: http://localhost:5000")
+    
+    # 🚀 RENDER-READY CONFIGURATION
+    port = int(os.environ.get('PORT', 5000))
+    print(f"\nServer running on: http://0.0.0.0:{port}")
+    print("✅ Render-ready configuration applied!")
     print("\nNOTE: Main /authenticate endpoint now skips OCR for high-confidence real notes!")
     
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    # Use production settings for Render
+    app.run(debug=False, host='0.0.0.0', port=port)

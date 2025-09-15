@@ -7,6 +7,10 @@ from datetime import datetime
 import uuid
 from PIL import Image
 
+# Set environment variables to reduce TensorFlow warnings
+os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+
 # Import utility modules
 from utils.image_utils import ImageProcessor
 from utils.model_predictor import ModelPredictor
@@ -37,25 +41,130 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(RESULTS_FOLDER, exist_ok=True)
 os.makedirs(MODEL_FOLDER, exist_ok=True)
 
-# Initialize components
-image_processor = ImageProcessor()
-model_predictor = ModelPredictor(model_path=os.path.join(MODEL_FOLDER, 'fake_note_detector_final.h5'))
-ocr_validator = OCRValidator()
+print("Starting ScanSure Banknote Authentication API...")
+print("Directory structure created")
 
-# Add model summary and debugging info
+# Initialize components with error handling
+try:
+    image_processor = ImageProcessor()
+    logger.info("✅ ImageProcessor initialized successfully")
+except Exception as e:
+    logger.error(f"❌ Failed to initialize ImageProcessor: {e}")
+    image_processor = None
+
+# Initialize model predictor with proper path handling
+model_path = os.path.join(MODEL_FOLDER, 'fake_note_detector_final.h5')
+if not os.path.exists(model_path):
+    # Try alternative paths
+    alternative_paths = [
+        'fake_note_detector_final.h5',
+        'banknote_model.h5',
+        'model.h5'
+    ]
+    
+    model_path = None
+    for alt_path in alternative_paths:
+        if os.path.exists(alt_path):
+            model_path = alt_path
+            logger.info(f"Found model at alternative path: {alt_path}")
+            break
+        # Also check in MODEL_FOLDER
+        full_alt_path = os.path.join(MODEL_FOLDER, alt_path)
+        if os.path.exists(full_alt_path):
+            model_path = full_alt_path
+            logger.info(f"Found model at: {full_alt_path}")
+            break
+    
+    if model_path is None:
+        logger.warning("❌ No model file found. Available files:")
+        for root, dirs, files in os.walk('.'):
+            for file in files:
+                if file.endswith(('.h5', '.keras')):
+                    logger.warning(f"  Found model file: {os.path.join(root, file)}")
+
+try:
+    model_predictor = ModelPredictor(model_path) if model_path else ModelPredictor("")
+    logger.info("✅ ModelPredictor initialized")
+except Exception as e:
+    logger.error(f"❌ Failed to initialize ModelPredictor: {e}")
+    # Create a fallback ModelPredictor
+    class FallbackModelPredictor:
+        def __init__(self):
+            self.confidence_threshold_real = 0.85
+            self.confidence_threshold_fake = 0.85
+            self.is_loaded = False
+            
+        def is_model_loaded(self):
+            return False
+            
+        def predict(self, image):
+            return {
+                "is_real": None,
+                "confidence": 0.0,
+                "raw_prediction": 0.5,
+                "error": "Model not loaded",
+                "fallback_mode": True
+            }
+            
+        def get_model_info(self):
+            return {
+                "status": "Model not loaded - using fallback mode",
+                "fallback_mode": True
+            }
+    
+    model_predictor = FallbackModelPredictor()
+
+try:
+    ocr_validator = OCRValidator()
+    logger.info("✅ OCRValidator initialized")
+except Exception as e:
+    logger.error(f"❌ Failed to initialize OCRValidator: {e}")
+    # Create a fallback OCRValidator
+    class FallbackOCRValidator:
+        def validate_comprehensive_text(self, image):
+            return {
+                'missing_texts': [],
+                'forbidden_texts_found': [],
+                'error_regions': [],
+                'bounding_boxes': []
+            }
+        
+        def validate_banknote(self, file_path):
+            return {
+                'status': 'OCR not available',
+                'avg_confidence': 0,
+                'quality_score': 0,
+                'error': 'OCR system not available'
+            }
+        
+        def get_capabilities(self):
+            return {
+                'status': 'OCR not available',
+                'tesseract_available': False
+            }
+    
+    ocr_validator = FallbackOCRValidator()
+
+print("Components initialized")
+
+# Add model summary and debugging info - ONLY if model loaded successfully
 if model_predictor.is_model_loaded():
-    print("\n" + "="*50)
-    print("MODEL SUMMARY:")
-    print("="*50)
-    model_predictor.model.summary()
-    print(f"\nModel output shape: {model_predictor.model.output_shape}")
-    print(f"Model input shape: {model_predictor.model.input_shape}")
-    print("\nLayer names for GradCAM:")
-    for i, layer in enumerate(model_predictor.model.layers):
-        print(f"{i}: {layer.name} - {layer.__class__.__name__}")
-        if hasattr(layer, "output_shape") and len(layer.output_shape) == 4:
-            print(f"   ^^ This is a Conv layer - shape: {layer.output_shape}")
-    print("="*50)
+    try:
+        print("\n" + "="*50)
+        print("MODEL SUMMARY:")
+        print("="*50)
+        model_predictor.model.summary()
+        print(f"\nModel output shape: {model_predictor.model.output_shape}")
+        print(f"Model input shape: {model_predictor.model.input_shape}")
+        print("\nLayer names for GradCAM:")
+        for i, layer in enumerate(model_predictor.model.layers):
+            print(f"{i}: {layer.name} - {layer.__class__.__name__}")
+            if hasattr(layer, "output_shape") and len(layer.output_shape) == 4:
+                print(f"   ^^ This is a Conv layer - shape: {layer.output_shape}")
+        print("="*50)
+    except Exception as e:
+        logger.error(f"Error displaying model summary: {e}")
+        print("Model loaded but couldn't display summary")
 else:
     print("Model failed to load - cannot show summary")
 
@@ -70,9 +179,9 @@ def health_check():
         'timestamp': datetime.now().isoformat(),
         'components': {
             'model_loaded': model_predictor.is_model_loaded(),
-            'image_processor': True,
-            'ocr_validator': True,
-            'gradcam_available': True
+            'image_processor': image_processor is not None,
+            'ocr_validator': True,  # Always true even if fallback
+            'gradcam_available': model_predictor.is_model_loaded()
         }
     })
 
@@ -99,12 +208,45 @@ def authenticate_banknote():
         file.save(file_path)
         
         # Process image
+        if image_processor is None:
+            return jsonify({'error': 'Image processor not available'}), 500
+            
         processed_image = image_processor.preprocess_for_model(file_path)
         if processed_image is None:
             return jsonify({'error': 'Failed to process image'}), 500
         
         # Get model prediction FIRST
         prediction_result = model_predictor.predict(processed_image)
+        
+        # Handle fallback mode
+        if prediction_result.get('fallback_mode', False):
+            response = {
+                'result': 'UNCERTAIN',
+                'confidence': 0.0,
+                'authenticity_score': 0.0,
+                'explanation': 'Model not available - cannot perform authentication',
+                'ocr_analysis': {
+                    'status': 'skipped',
+                    'reason': 'Model not loaded'
+                },
+                'gradcam_available': False,
+                'gradcam_filename': None,
+                'gradcam_type': 'none',
+                'timestamp': datetime.now().isoformat(),
+                'processing_details': {
+                    'model_confidence': 0.0,
+                    'processing_mode': 'fallback',
+                    'error': prediction_result.get('error', 'Unknown error')
+                }
+            }
+            
+            # Clean up uploaded file
+            try:
+                os.remove(file_path)
+            except:
+                pass
+            
+            return jsonify(response)
         
         # Check if note is confidently REAL - if so, skip OCR and GradCAM
         is_real = prediction_result['is_real']
@@ -157,51 +299,80 @@ def authenticate_banknote():
         
         gradcam_filename = None
         
-        if not is_real and confidence >= model_predictor.confidence_threshold_fake:
-            # FAKE note
-            result = "FAKE"
-            authenticity_score = 1 - confidence
+        # Only generate GradCAM if model is loaded
+        if model_predictor.is_model_loaded():
+            try:
+                if not is_real and confidence >= model_predictor.confidence_threshold_fake:
+                    # FAKE note
+                    result = "FAKE"
+                    authenticity_score = 1 - confidence
+                    
+                    print("Generating OCR-focused GradCAM for FAKE note...")
+                    print(f"OCR results for FAKE note: {len(comprehensive_ocr_results.get('missing_texts', []))} missing texts, {len(comprehensive_ocr_results.get('forbidden_texts_found', []))} forbidden texts")
+                    
+                    heatmap = generate_ocr_focused_gradcam(model_predictor.model, image_pil, comprehensive_ocr_results)
+                    gradcam_filename = f"{uuid.uuid4().hex}_ocr_focused_gradcam.png"
+                    gradcam_path = os.path.join(app.config['RESULTS_FOLDER'], gradcam_filename)
+                    Image.fromarray(heatmap).save(gradcam_path)
+                    explanation = "Counterfeit banknote detected. OCR analysis and heatmap show specific problem areas."
+                    
+                elif is_real and confidence < model_predictor.confidence_threshold_real:
+                    # REAL but with low confidence - run OCR to check for issues
+                    result = "REAL"
+                    authenticity_score = confidence
+                    
+                    print(f"Analyzing low-confidence REAL note ({confidence*100:.1f}%) with OCR...")
+                    
+                    # Check if OCR found any issues
+                    if comprehensive_ocr_results.get('missing_texts') or comprehensive_ocr_results.get('forbidden_texts_found'):
+                        print("Generating OCR-focused GradCAM for low-confidence REAL note with OCR issues...")
+                        heatmap = generate_ocr_focused_gradcam(model_predictor.model, image_pil, comprehensive_ocr_results)
+                        gradcam_filename = f"{uuid.uuid4().hex}_ocr_focused_gradcam.png"
+                        gradcam_path = os.path.join(app.config['RESULTS_FOLDER'], gradcam_filename)
+                        Image.fromarray(heatmap).save(gradcam_path)
+                        explanation = f"Authentic banknote with moderate confidence ({confidence*100:.1f}%). OCR detected some text inconsistencies requiring attention."
+                    else:
+                        explanation = f"Authentic banknote with moderate confidence ({confidence*100:.1f}%). OCR analysis shows no text issues."
+                
+                else:
+                    # UNCERTAIN case
+                    result = "UNCERTAIN"
+                    authenticity_score = confidence if is_real else 1 - confidence
+                    
+                    print("Generating OCR-focused GradCAM for UNCERTAIN note...")
+                    print(f"OCR results for UNCERTAIN note: {len(comprehensive_ocr_results.get('missing_texts', []))} missing texts, {len(comprehensive_ocr_results.get('forbidden_texts_found', []))} forbidden texts")
+                    
+                    heatmap = generate_ocr_focused_gradcam(model_predictor.model, image_pil, comprehensive_ocr_results)
+                    gradcam_filename = f"{uuid.uuid4().hex}_ocr_focused_gradcam.png"
+                    gradcam_path = os.path.join(app.config['RESULTS_FOLDER'], gradcam_filename)
+                    Image.fromarray(heatmap).save(gradcam_path)
+                    explanation = "Uncertain authenticity. Manual verification recommended."
             
-            print("Generating OCR-focused GradCAM for FAKE note...")
-            print(f"OCR results for FAKE note: {len(comprehensive_ocr_results.get('missing_texts', []))} missing texts, {len(comprehensive_ocr_results.get('forbidden_texts_found', []))} forbidden texts")
-            
-            heatmap = generate_ocr_focused_gradcam(model_predictor.model, image_pil, comprehensive_ocr_results)
-            gradcam_filename = f"{uuid.uuid4().hex}_ocr_focused_gradcam.png"
-            gradcam_path = os.path.join(app.config['RESULTS_FOLDER'], gradcam_filename)
-            Image.fromarray(heatmap).save(gradcam_path)
-            explanation = "Counterfeit banknote detected. OCR analysis and heatmap show specific problem areas."
-            
-        elif is_real and confidence < model_predictor.confidence_threshold_real:
-            # REAL but with low confidence - run OCR to check for issues
-            result = "REAL"
-            authenticity_score = confidence
-            
-            print(f"Analyzing low-confidence REAL note ({confidence*100:.1f}%) with OCR...")
-            
-            # Check if OCR found any issues
-            if comprehensive_ocr_results.get('missing_texts') or comprehensive_ocr_results.get('forbidden_texts_found'):
-                print("Generating OCR-focused GradCAM for low-confidence REAL note with OCR issues...")
-                heatmap = generate_ocr_focused_gradcam(model_predictor.model, image_pil, comprehensive_ocr_results)
-                gradcam_filename = f"{uuid.uuid4().hex}_ocr_focused_gradcam.png"
-                gradcam_path = os.path.join(app.config['RESULTS_FOLDER'], gradcam_filename)
-                Image.fromarray(heatmap).save(gradcam_path)
-                explanation = f"Authentic banknote with moderate confidence ({confidence*100:.1f}%). OCR detected some text inconsistencies requiring attention."
-            else:
-                explanation = f"Authentic banknote with moderate confidence ({confidence*100:.1f}%). OCR analysis shows no text issues."
-        
+            except Exception as gradcam_error:
+                logger.error(f"GradCAM generation failed: {gradcam_error}")
+                # Continue without GradCAM
+                if not is_real and confidence >= model_predictor.confidence_threshold_fake:
+                    result = "FAKE"
+                    authenticity_score = 1 - confidence
+                    explanation = "Counterfeit banknote detected. GradCAM visualization unavailable."
+                elif is_real and confidence < model_predictor.confidence_threshold_real:
+                    result = "REAL"
+                    authenticity_score = confidence
+                    explanation = f"Authentic banknote with moderate confidence ({confidence*100:.1f}%). GradCAM visualization unavailable."
+                else:
+                    result = "UNCERTAIN"
+                    authenticity_score = confidence if is_real else 1 - confidence
+                    explanation = "Uncertain authenticity. Manual verification recommended. GradCAM visualization unavailable."
         else:
-            # UNCERTAIN case
-            result = "UNCERTAIN"
-            authenticity_score = confidence if is_real else 1 - confidence
-            
-            print("Generating OCR-focused GradCAM for UNCERTAIN note...")
-            print(f"OCR results for UNCERTAIN note: {len(comprehensive_ocr_results.get('missing_texts', []))} missing texts, {len(comprehensive_ocr_results.get('forbidden_texts_found', []))} forbidden texts")
-            
-            heatmap = generate_ocr_focused_gradcam(model_predictor.model, image_pil, comprehensive_ocr_results)
-            gradcam_filename = f"{uuid.uuid4().hex}_ocr_focused_gradcam.png"
-            gradcam_path = os.path.join(app.config['RESULTS_FOLDER'], gradcam_filename)
-            Image.fromarray(heatmap).save(gradcam_path)
-            explanation = "Uncertain authenticity. Manual verification recommended."
+            # Model not loaded, use basic classification
+            if confidence > 0.7:
+                result = "REAL" if is_real else "FAKE"
+                authenticity_score = confidence if is_real else 1 - confidence
+                explanation = f"Classification based on fallback analysis. Model not fully available."
+            else:
+                result = "UNCERTAIN"
+                authenticity_score = 0.5
+                explanation = "Uncertain authenticity. Model not available for confident prediction."
         
         # Prepare response for cases that had OCR analysis
         response = {
@@ -215,8 +386,8 @@ def authenticate_banknote():
             'gradcam_type': 'ocr_focused' if gradcam_filename else 'none',
             'timestamp': datetime.now().isoformat(),
             'processing_details': {
-                'raw_prediction': prediction_result['raw_prediction'],
-                'model_confidence': prediction_result['confidence'],
+                'raw_prediction': prediction_result.get('raw_prediction', 0.5),
+                'model_confidence': prediction_result.get('confidence', 0.0),
                 'ocr_errors_detected': len(comprehensive_ocr_results.get('missing_texts', [])) + len(comprehensive_ocr_results.get('forbidden_texts_found', [])),
                 'error_regions_highlighted': len(comprehensive_ocr_results.get('error_regions', [])),
                 'ocr_confidence': clean_ocr_results.get('avg_confidence', 0),
@@ -317,6 +488,9 @@ def validate_ocr_only():
 def test_gradcam():
     """Test endpoint for OCR-focused GradCAM generation - Always runs regardless of CNN"""
     try:
+        if not model_predictor.is_model_loaded():
+            return jsonify({'error': 'Model not loaded - cannot generate GradCAM'}), 500
+        
         if 'file' not in request.files:
             return jsonify({'error': 'No file provided'}), 400
         
@@ -380,12 +554,14 @@ def internal_server_error(e):
     return jsonify({'error': 'Internal server error'}), 500
 
 if __name__ == '__main__':
-    print("Starting ScanSure Banknote Authentication API...")
-    print("Directory structure created")
-    print("Components initialized")
+    # Print configuration info ONLY after successful initialization
     print(f"\nConfidence thresholds:")
-    print(f"  Real note threshold: {model_predictor.confidence_threshold_real*100}%")
-    print(f"  Fake note threshold: {model_predictor.confidence_threshold_fake*100}%")
+    if hasattr(model_predictor, 'confidence_threshold_real'):
+        print(f"  Real note threshold: {model_predictor.confidence_threshold_real*100}%")
+        print(f"  Fake note threshold: {model_predictor.confidence_threshold_fake*100}%")
+    else:
+        print("  Thresholds not available (model not loaded)")
+    
     print("\nProcessing logic:")
     print("  • High confidence REAL notes (>85%): CNN only, no OCR, no GradCAM")
     print("  • All other cases: Full analysis with OCR and GradCAM")
@@ -397,11 +573,11 @@ if __name__ == '__main__':
     print("  GET  /health - Health check")
     print("  GET  /model/info - System information")
     
-    # 🚀 RENDER-READY CONFIGURATION
+    # 🚀 RAILWAY-READY CONFIGURATION
     port = int(os.environ.get('PORT', 5000))
     print(f"\nServer running on: http://0.0.0.0:{port}")
-    print("✅ Render-ready configuration applied!")
+    print("✅ Railway-ready configuration applied!")
     print("\nNOTE: Main /authenticate endpoint now skips OCR for high-confidence real notes!")
     
-    # Use production settings for Render
+    # Use production settings for Railway
     app.run(debug=False, host='0.0.0.0', port=port)

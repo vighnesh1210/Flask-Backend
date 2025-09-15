@@ -4,7 +4,7 @@ import requests
 url = "http://127.0.0.1:5000/authenticate"
 
 # Path to your test image
-IMAGE_PATH = r"C:\Users\Vighnesh\Desktop\1001.jpeg"
+IMAGE_PATH = r"C:\Users\Vighnesh\Desktop\100.jpg"
 
 def main():
     try:
